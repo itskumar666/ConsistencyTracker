@@ -1,0 +1,10 @@
+#!/bin/bash
+# Consistency Tracker Launcher
+
+# Get the directory where this script is located
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+RESOURCES_DIR="$DIR/../Resources"
+
+# Run the Python app
+cd "$RESOURCES_DIR"
+/usr/bin/env python3 "$RESOURCES_DIR/ConsistencyApp.py"
