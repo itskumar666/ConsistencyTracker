@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QFrame, QScrollArea, QLineEdit, QMessageBox,
     QGridLayout, QSizePolicy, QSpacerItem, QInputDialog, QTextEdit,
     QComboBox, QColorDialog, QListWidget, QListWidgetItem, QSplitter,
-    QDialog, QDialogButtonBox, QSpinBox, QSlider, QTabWidget
+    QDialog, QDialogButtonBox, QSpinBox, QSlider, QTabWidget, QCheckBox
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
 from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextCharFormat, QTextCursor, QTextListFormat
@@ -185,8 +185,29 @@ class ConsistencyApp(QMainWindow):
                 data = json.load(f)
                 if "notes" not in data:
                     data["notes"] = []
+                if "reminders" not in data:
+                    data["reminders"] = {
+                        "enabled": True,
+                        "times": {
+                            "morning": "09:00",
+                            "afternoon": "14:00",
+                            "evening": "20:00"
+                        }
+                    }
                 return data
-        return {"activities": {}, "badges": [], "notes": []}
+        return {
+            "activities": {},
+            "badges": [],
+            "notes": [],
+            "reminders": {
+                "enabled": True,
+                "times": {
+                    "morning": "09:00",
+                    "afternoon": "14:00",
+                    "evening": "20:00"
+                }
+            }
+        }
     
     def save_data(self):
         with open(DATA_FILE, 'w') as f:
@@ -1425,10 +1446,75 @@ class ConsistencyApp(QMainWindow):
         title2.setFont(QFont("SF Pro Display", 15, QFont.Weight.Bold))
         remind_layout.addWidget(title2)
         
-        times = QLabel("• 9:00 AM - Morning\n• 2:00 PM - Afternoon\n• 8:00 PM - Evening")
-        times.setFont(QFont("SF Pro Display", 13))
-        times.setStyleSheet("color: #8888aa;")
-        remind_layout.addWidget(times)
+        reminder_data = self.data.get("reminders", {
+            "enabled": True,
+            "times": {"morning": "09:00", "afternoon": "14:00", "evening": "20:00"}
+        })
+        times_data = reminder_data.get("times", {})
+        
+        enable_row = QHBoxLayout()
+        enable_label = QLabel("Enable reminders")
+        enable_label.setFont(QFont("SF Pro Display", 13))
+        enable_row.addWidget(enable_label)
+        enable_row.addStretch()
+        enable_toggle = QCheckBox()
+        enable_toggle.setChecked(reminder_data.get("enabled", True))
+        enable_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        enable_row.addWidget(enable_toggle)
+        remind_layout.addLayout(enable_row)
+        
+        def build_time_row(label_text, key):
+            row = QHBoxLayout()
+            label = QLabel(label_text)
+            label.setFont(QFont("SF Pro Display", 13))
+            row.addWidget(label)
+            row.addStretch()
+            inp = QLineEdit()
+            inp.setInputMask("99:99")
+            inp.setFixedSize(90, 36)
+            inp.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            inp.setFont(QFont("Menlo", 12, QFont.Weight.Bold))
+            inp.setText(times_data.get(key, "09:00" if key == "morning" else "14:00" if key == "afternoon" else "20:00"))
+            inp.setStyleSheet("""
+                QLineEdit {
+                    background-color: #2a2a5a;
+                    border: 2px solid #3a3a6a;
+                    border-radius: 8px;
+                    color: white;
+                    padding: 4px 8px;
+                }
+                QLineEdit:focus { border-color: #e94560; }
+            """)
+            row.addWidget(inp)
+            return row, inp
+        
+        morning_row, morning_input = build_time_row("Morning", "morning")
+        remind_layout.addLayout(morning_row)
+        afternoon_row, afternoon_input = build_time_row("Afternoon", "afternoon")
+        remind_layout.addLayout(afternoon_row)
+        evening_row, evening_input = build_time_row("Evening", "evening")
+        remind_layout.addLayout(evening_row)
+        
+        save_reminders = QPushButton("Save Reminder Settings")
+        save_reminders.setObjectName("primary")
+        save_reminders.setFixedHeight(42)
+        save_reminders.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        def _save_reminders():
+            self.data.setdefault("reminders", {})
+            self.data["reminders"]["enabled"] = enable_toggle.isChecked()
+            self.data["reminders"]["times"] = {
+                "morning": morning_input.text() or "09:00",
+                "afternoon": afternoon_input.text() or "14:00",
+                "evening": evening_input.text() or "20:00"
+            }
+            self.save_data()
+            self.sent_reminders = {"morning": False, "afternoon": False, "evening": False, "date": self.get_today()}
+            self.send_notification("⏰ Reminders Updated", "Your reminder schedule has been saved.")
+        
+        save_reminders.clicked.connect(_save_reminders)
+        remind_layout.addSpacing(8)
+        remind_layout.addWidget(save_reminders)
         
         self.content_layout.addWidget(remind_card)
         
@@ -2091,6 +2177,10 @@ class ConsistencyApp(QMainWindow):
         if self.sent_reminders["date"] != today:
             self.sent_reminders = {"morning": False, "afternoon": False, "evening": False, "date": today}
         
+        reminders = self.data.get("reminders", {})
+        if not reminders.get("enabled", True):
+            return
+
         checked_in = any(
             today in info.get("dates", [])
             for info in self.data.get("activities", {}).values()
@@ -2099,15 +2189,20 @@ class ConsistencyApp(QMainWindow):
         if checked_in or not self.data.get("activities"):
             return
         
-        hour = now.hour
-        
-        if hour == 9 and not self.sent_reminders["morning"]:
+        times = reminders.get("times", {})
+        now_str = now.strftime("%H:%M")
+
+        def should_send(key, fallback):
+            target = times.get(key, fallback)
+            return target == now_str and not self.sent_reminders.get(key, False)
+
+        if should_send("morning", "09:00"):
             self.send_notification("☀️ Good Morning!", "Ready to build your streak?")
             self.sent_reminders["morning"] = True
-        elif hour == 14 and not self.sent_reminders["afternoon"]:
+        elif should_send("afternoon", "14:00"):
             self.send_notification("📝 Afternoon Check-in", "Don't forget to log progress!")
             self.sent_reminders["afternoon"] = True
-        elif hour == 20 and not self.sent_reminders["evening"]:
+        elif should_send("evening", "20:00"):
             self.send_notification("⚠️ Streak at Risk!", "Check in before midnight!")
             self.sent_reminders["evening"] = True
 
