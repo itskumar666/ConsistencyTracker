@@ -143,7 +143,7 @@ def _run():
     exec(compile(source, script, "exec"), globals(), globals())
 
 
-DEFAULT_SCRIPT='/Users/ashutoshkumar/Desktop/Consistency/ConsistencyApp.py'
+DEFAULT_SCRIPT='/Users/ashutoshkumar/Desktop/Consistency/main.py'
 SCRIPT_MAP={}
 try:
     _run()

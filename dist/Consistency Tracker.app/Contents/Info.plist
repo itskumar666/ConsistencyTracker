@@ -26,10 +26,8 @@
 	<string>1.0.0</string>
 	<key>LSHasLocalizedDisplayName</key>
 	<false/>
-	<key>LSMinimumSystemVersion</key>
-	<string>10.15</string>
 	<key>LSUIElement</key>
-	<true/>
+	<false/>
 	<key>NSAppleScriptEnabled</key>
 	<false/>
 	<key>NSHighResolutionCapable</key>
@@ -40,8 +38,6 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
-	<key>NSUserNotificationAlertStyle</key>
-	<string>alert</string>
 	<key>PyMainFileNames</key>
 	<array>
 		<string>__boot__</string>

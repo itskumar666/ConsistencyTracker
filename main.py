@@ -14,7 +14,8 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QFrame, QScrollArea, QLineEdit, QMessageBox,
     QGridLayout, QSizePolicy, QSpacerItem, QInputDialog, QTextEdit,
     QComboBox, QColorDialog, QListWidget, QListWidgetItem, QSplitter,
-    QDialog, QDialogButtonBox, QSpinBox, QSlider, QTabWidget, QCheckBox
+    QDialog, QDialogButtonBox, QSpinBox, QSlider, QTabWidget, QCheckBox,
+    QCalendarWidget
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
 from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextCharFormat, QTextCursor, QTextListFormat
@@ -23,6 +24,9 @@ from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextCharFormat, QTextCu
 DATA_DIR = Path.home() / ".consistency_tracker"
 DATA_FILE = DATA_DIR / "data.json"
 DATA_DIR.mkdir(exist_ok=True)
+
+ICLOUD_DIR = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs/ConsistencyTracker"
+ICLOUD_FILE = ICLOUD_DIR / "data.json"
 
 # Styles
 STYLE = """
@@ -180,25 +184,53 @@ class ConsistencyApp(QMainWindow):
         self.sent_reminders = {"morning": False, "afternoon": False, "evening": False, "date": self.get_today()}
     
     def load_data(self):
+        def ensure_defaults(data):
+            if "notes" not in data:
+                data["notes"] = []
+            if "calendar" not in data:
+                data["calendar"] = {}
+            else:
+                # Normalize older calendar entries (list of strings) to dicts with time
+                normalized = {}
+                for date_key, items in data.get("calendar", {}).items():
+                    if isinstance(items, list):
+                        new_items = []
+                        for item in items:
+                            if isinstance(item, dict):
+                                new_items.append({
+                                    "title": item.get("title", ""),
+                                    "time": item.get("time", "00:00")
+                                })
+                            else:
+                                new_items.append({"title": str(item), "time": "00:00"})
+                        normalized[date_key] = new_items
+                if normalized:
+                    data["calendar"] = normalized
+            if "reminders" not in data:
+                data["reminders"] = {
+                    "enabled": True,
+                    "times": {
+                        "morning": "09:00",
+                        "afternoon": "14:00",
+                        "evening": "20:00"
+                    }
+                }
+            return data
+
+        # Prefer local data, fall back to iCloud if local missing
         if DATA_FILE.exists():
             with open(DATA_FILE, 'r') as f:
                 data = json.load(f)
-                if "notes" not in data:
-                    data["notes"] = []
-                if "reminders" not in data:
-                    data["reminders"] = {
-                        "enabled": True,
-                        "times": {
-                            "morning": "09:00",
-                            "afternoon": "14:00",
-                            "evening": "20:00"
-                        }
-                    }
-                return data
+                return ensure_defaults(data)
+        if ICLOUD_FILE.exists():
+            with open(ICLOUD_FILE, 'r') as f:
+                data = json.load(f)
+                return ensure_defaults(data)
         return {
             "activities": {},
             "badges": [],
             "notes": [],
+            "calendar": {},
             "reminders": {
                 "enabled": True,
                 "times": {
@@ -212,6 +244,13 @@ class ConsistencyApp(QMainWindow):
     def save_data(self):
         with open(DATA_FILE, 'w') as f:
             json.dump(self.data, f, indent=2)
+        # iCloud backup (best-effort)
+        try:
+            ICLOUD_DIR.mkdir(parents=True, exist_ok=True)
+            with open(ICLOUD_FILE, 'w') as f:
+                json.dump(self.data, f, indent=2)
+        except Exception:
+            pass
     
     def get_today(self):
         return datetime.now().strftime("%Y-%m-%d")
@@ -273,6 +312,7 @@ class ConsistencyApp(QMainWindow):
             ("🏠  Home", self.show_home),
             ("➕  Add Activity", self.show_add_activity),
             ("📝  Notes", self.show_notes),
+            ("📅  Calendar", self.show_calendar),
             ("🏆  Badges", self.show_badges),
             ("📊  Statistics", self.show_stats),
             ("⚙️  Settings", self.show_settings),
@@ -1551,6 +1591,181 @@ class ConsistencyApp(QMainWindow):
         self.content_layout.addSpacing(30)
         self.content_layout.addWidget(about)
         
+        self.content_layout.addStretch()
+
+    # ==================== CALENDAR ====================
+    def show_calendar(self):
+        self.clear_content()
+        self.set_active_nav("Calendar")
+        self.header_title.setText("Calendar")
+
+        calendar_card = QFrame()
+        calendar_card.setStyleSheet("""
+            QFrame {
+                background-color: #1e1e3f;
+                border-radius: 15px;
+                padding: 20px;
+            }
+        """)
+        calendar_layout = QVBoxLayout(calendar_card)
+        calendar_layout.setSpacing(12)
+
+        title = QLabel("📅 Plan Ahead")
+        title.setFont(QFont("SF Pro Display", 16, QFont.Weight.Bold))
+        calendar_layout.addWidget(title)
+
+        calendar = QCalendarWidget()
+        calendar.setGridVisible(True)
+        calendar.setStyleSheet("""
+            QCalendarWidget QWidget {
+                background-color: #1e1e3f;
+                color: white;
+            }
+            QCalendarWidget QToolButton {
+                color: white;
+                background-color: transparent;
+            }
+            QCalendarWidget QAbstractItemView {
+                background-color: #2a2a5a;
+                selection-background-color: #e94560;
+                selection-color: white;
+                border-radius: 8px;
+            }
+        """)
+        calendar_layout.addWidget(calendar)
+
+        list_title = QLabel("Planned items (all dates)")
+        list_title.setFont(QFont("SF Pro Display", 14, QFont.Weight.Bold))
+        calendar_layout.addWidget(list_title)
+
+        items_list = QListWidget()
+        items_list.setStyleSheet("""
+            QListWidget {
+                background-color: #2a2a5a;
+                border: 2px solid #3a3a6a;
+                border-radius: 10px;
+                padding: 8px;
+                color: white;
+            }
+            QListWidget::item:selected {
+                background-color: #e94560;
+            }
+        """)
+        calendar_layout.addWidget(items_list)
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("Add Item")
+        add_btn.setObjectName("primary")
+        add_btn.setFixedHeight(40)
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_row.addWidget(add_btn)
+
+        edit_btn = QPushButton("Edit Selected")
+        edit_btn.setFixedHeight(40)
+        edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        edit_btn.setStyleSheet("background-color: #2a2a5a;")
+        btn_row.addWidget(edit_btn)
+
+        remove_btn = QPushButton("Remove Selected")
+        remove_btn.setFixedHeight(40)
+        remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        remove_btn.setStyleSheet("background-color: #2a2a5a;")
+        btn_row.addWidget(remove_btn)
+
+        btn_row.addStretch()
+        calendar_layout.addLayout(btn_row)
+
+        row_map = []
+
+        def selected_date_key():
+            return calendar.selectedDate().toString("yyyy-MM-dd")
+
+        def normalize_time(value):
+            try:
+                parts = value.strip().split(":")
+                if len(parts) != 2:
+                    return "00:00"
+                hours = max(0, min(23, int(parts[0])))
+                mins = max(0, min(59, int(parts[1])))
+                return f"{hours:02d}:{mins:02d}"
+            except ValueError:
+                return "00:00"
+
+        def refresh_list():
+            items_list.clear()
+            row_map.clear()
+            calendar_data = self.data.get("calendar", {})
+            for date_key in sorted(calendar_data.keys()):
+                items = calendar_data.get(date_key, [])
+                sorted_indices = sorted(range(len(items)), key=lambda i: items[i].get("time", "00:00"))
+                for idx in sorted_indices:
+                    item = items[idx]
+                    title = item.get("title", "")
+                    time_val = item.get("time", "00:00")
+                    items_list.addItem(f"{date_key} · {time_val} — {title}")
+                    row_map.append((date_key, idx))
+
+        def add_item():
+            date_key = selected_date_key()
+            text, ok = QInputDialog.getText(self, "Add planned item", "What do you want to do?")
+            if not (ok and text.strip()):
+                return
+            time_text, ok_time = QInputDialog.getText(self, "Add time", "Time (HH:MM)")
+            if not ok_time:
+                return
+            time_val = normalize_time(time_text or "00:00")
+            self.data.setdefault("calendar", {}).setdefault(date_key, []).append({
+                "title": text.strip(),
+                "time": time_val
+            })
+            self.save_data()
+            refresh_list()
+
+        def remove_item():
+            selected = items_list.currentRow()
+            if selected < 0 or selected >= len(row_map):
+                return
+            date_key, idx = row_map[selected]
+            items = self.data.get("calendar", {}).get(date_key, [])
+            if 0 <= idx < len(items):
+                items.pop(idx)
+                if items:
+                    self.data["calendar"][date_key] = items
+                else:
+                    self.data["calendar"].pop(date_key, None)
+                self.save_data()
+                refresh_list()
+
+        def edit_item():
+            selected = items_list.currentRow()
+            if selected < 0 or selected >= len(row_map):
+                return
+            date_key, idx = row_map[selected]
+            items = self.data.get("calendar", {}).get(date_key, [])
+            if not (0 <= idx < len(items)):
+                return
+            item = items[idx]
+            current_title = item.get("title", "")
+            current_time = item.get("time", "00:00")
+            text, ok = QInputDialog.getText(self, "Edit planned item", "Update item", text=current_title)
+            if not (ok and text.strip()):
+                return
+            time_text, ok_time = QInputDialog.getText(self, "Edit time", "Time (HH:MM)", text=current_time)
+            if not ok_time:
+                return
+            item["title"] = text.strip()
+            item["time"] = normalize_time(time_text or current_time)
+            self.save_data()
+            refresh_list()
+
+        calendar.selectionChanged.connect(refresh_list)
+        add_btn.clicked.connect(add_item)
+        edit_btn.clicked.connect(edit_item)
+        remove_btn.clicked.connect(remove_item)
+
+        refresh_list()
+
+        self.content_layout.addWidget(calendar_card)
         self.content_layout.addStretch()
     
     # ==================== NOTES ====================
